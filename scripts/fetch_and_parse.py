@@ -1,4 +1,4 @@
-import requests, re, json, os, csv, sys, io
+import requests, re, json, os, csv, sys, io, html
 
 OUTPUT_DIR = "output"
 
@@ -11,12 +11,13 @@ def get_latest_post():
     resp.raise_for_status()
     posts = resp.json()
     for post in posts:
-        html = post.get("content", {}).get("rendered", "")
-        m = re.search(r'href="([^"]+\.pdf)"', html)
+        html_content = post.get("content", {}).get("rendered", "")
+        m = re.search(r'href="([^"]+\.pdf)"', html_content)
         if m:
+            titulo_sin_tags = re.sub("<[^<]+?>", "", post["title"]["rendered"]).strip()
             return {
                 "pdf_url": m.group(1),
-                "post_title": re.sub("<[^<]+?>", "", post["title"]["rendered"]).strip(),
+                "post_title": html.unescape(titulo_sin_tags),
                 "post_link": post["link"],
                 "post_date": post["date"],
             }
@@ -132,8 +133,22 @@ def main():
     filename = f"Aranceles_{year_month}.csv"
     filepath = os.path.join(OUTPUT_DIR, filename)
 
-    if os.path.exists(filepath):
-        print(f"{filename} ya existe, no hay novedades.")
+    # Compará por la publicación EXACTA ya procesada (latest_meta.json), no solo por
+    # si el archivo del mes ya existe. Esto es clave para las correcciones que CMP
+    # publica dentro del mismo mes (ej. "actualizado al 03-09-26" -> "actualizado al
+    # 10-09-26"): antes, si el CSV del mes ya existía, el script cortaba acá y la
+    # corrección nunca se procesaba.
+    meta_path = os.path.join(OUTPUT_DIR, "latest_meta.json")
+    previous_title = None
+    if os.path.exists(meta_path):
+        try:
+            with open(meta_path, encoding="utf-8") as f:
+                previous_title = json.load(f).get("post_title")
+        except (json.JSONDecodeError, OSError):
+            previous_title = None
+
+    if os.path.exists(filepath) and previous_title == info["post_title"]:
+        print(f"{filename} ya refleja la última publicación ('{info['post_title']}'), no hay novedades.")
         return
 
     pdf_bytes = requests.get(info["pdf_url"], timeout=60).content
@@ -148,7 +163,7 @@ def main():
     with open(os.path.join(OUTPUT_DIR, "latest.txt"), "w", encoding="utf-8") as f:
         f.write(filename)
 
-    with open(os.path.join(OUTPUT_DIR, "latest_meta.json"), "w", encoding="utf-8") as f:
+    with open(meta_path, "w", encoding="utf-8") as f:
         json.dump(info, f, ensure_ascii=False, indent=2)
 
     print(f"OK: generado {filename} con {len(activas)} activas y {len(sin_atencion)} sin atencion. Origen: {info['post_title']}")
