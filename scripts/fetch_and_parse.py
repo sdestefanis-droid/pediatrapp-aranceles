@@ -1,14 +1,32 @@
-import requests, re, json, os, csv, sys, io, html
+import requests, re, json, os, csv, sys, io, html, time
 
 OUTPUT_DIR = "output"
 
+# El sitio del Círculo a veces tarda o corta la conexión. Se reintenta antes de dar la corrida por fallida.
+INTENTOS = 4
+ESPERA_SEGUNDOS = 30
+
+
+def http_get(url, **kwargs):
+    ultimo_error = None
+    for intento in range(1, INTENTOS + 1):
+        try:
+            resp = requests.get(url, **kwargs)
+            resp.raise_for_status()
+            return resp
+        except requests.RequestException as e:
+            ultimo_error = e
+            print(f"Intento {intento}/{INTENTOS} fallido para {url}: {type(e).__name__}: {e}")
+            if intento < INTENTOS:
+                time.sleep(ESPERA_SEGUNDOS * intento)
+    raise ultimo_error
+
 def get_latest_post():
-    resp = requests.get(
+    resp = http_get(
         "https://www.cmparana.com.ar/wp-json/wp/v2/posts",
         params={"search": "Estado de Obras Sociales", "per_page": 5, "orderby": "date", "order": "desc"},
-        timeout=30,
+        timeout=45,
     )
-    resp.raise_for_status()
     posts = resp.json()
     for post in posts:
         html_content = post.get("content", {}).get("rendered", "")
@@ -151,7 +169,7 @@ def main():
         print(f"{filename} ya refleja la última publicación ('{info['post_title']}'), no hay novedades.")
         return
 
-    pdf_bytes = requests.get(info["pdf_url"], timeout=60).content
+    pdf_bytes = http_get(info["pdf_url"], timeout=90).content
     activas, sin_atencion = parse_pdf(pdf_bytes)
 
     if len(activas) == 0:
