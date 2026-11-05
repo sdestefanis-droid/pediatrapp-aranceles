@@ -21,21 +21,30 @@ def http_get(url, **kwargs):
                 time.sleep(ESPERA_SEGUNDOS * intento)
     raise ultimo_error
 
+# El buscador del Círculo también devuelve otros avisos que mencionan "Obras Sociales"
+# (por ejemplo "Instructivo de Facturación de Obras Sociales", que trae un PDF distinto).
+# Solo se aceptan las publicaciones cuyo título empieza con "Estado de Obras Sociales".
+PREFIJO_TITULO = "estado de obras sociales"
+
 def get_latest_post():
     resp = http_get(
         "https://www.cmparana.com.ar/wp-json/wp/v2/posts",
-        params={"search": "Estado de Obras Sociales", "per_page": 5, "orderby": "date", "order": "desc"},
+        params={"search": "Estado de Obras Sociales", "per_page": 10, "orderby": "date", "order": "desc"},
         timeout=45,
     )
     posts = resp.json()
     for post in posts:
+        titulo_sin_tags = re.sub("<[^<]+?>", "", post["title"]["rendered"]).strip()
+        titulo = html.unescape(titulo_sin_tags)
+        if not titulo.lower().startswith(PREFIJO_TITULO):
+            print(f"Se ignora la publicación '{titulo}' (no es un 'Estado de Obras Sociales').")
+            continue
         html_content = post.get("content", {}).get("rendered", "")
         m = re.search(r'href="([^"]+\.pdf)"', html_content)
         if m:
-            titulo_sin_tags = re.sub("<[^<]+?>", "", post["title"]["rendered"]).strip()
             return {
                 "pdf_url": m.group(1),
-                "post_title": html.unescape(titulo_sin_tags),
+                "post_title": titulo,
                 "post_link": post["link"],
                 "post_date": post["date"],
             }
